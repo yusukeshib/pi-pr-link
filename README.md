@@ -1,25 +1,33 @@
 # @yusukeshib/pi-pr-link
 
-A [pi](https://pi.dev) extension that shows the GitHub **PR for the current
-branch** as a clickable link in the footer status area.
+A [pi](https://pi.dev) extension that shows the GitHub **PR(s) for the current
+branch** as clickable links in the footer status area.
 
-It runs `gh pr view` to resolve the PR for the checked-out branch and pins it
-into the footer via `ctx.ui.setStatus()`. The text is an [OSC 8
-hyperlink](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda),
-so it's clickable in terminals that support it.
+If the working directory is a git repo, it runs `gh pr view` to resolve the PR
+for the checked-out branch. If it's a *container* directory holding multiple
+repos, each immediate child repo is checked and every open PR is shown. Links
+are pinned into the footer via `ctx.ui.setStatus()` as [OSC 8
+hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda),
+so they're clickable in terminals that support it.
 
 ## What it looks like
 
 When the current branch has an open PR, the footer gains a bold green,
-clickable PR number:
+clickable `repo#number` link:
 
 ```text
-#1234
+mirage-web#1234
 ```
 
-Click it (in a supporting terminal) to open the PR in your browser. When there's
-no PR — or you're not in a repo, or `gh` isn't installed — the status is simply
-hidden.
+In a container directory of multiple repos, one link per repo with an open PR:
+
+```text
+mirage-web#1234 mirage-api#56
+```
+
+Click a link (in a supporting terminal) to open the PR in your browser. When
+there's no PR — or you're not in or above any repo, or `gh` isn't installed —
+the status is simply hidden.
 
 ## When it refreshes
 

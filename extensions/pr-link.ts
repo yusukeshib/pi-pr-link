@@ -1,14 +1,21 @@
 /**
- * pr-link — shows the GitHub PR for the current branch in the footer.
+ * pr-link — shows the GitHub PR(s) for the current branch in the footer.
  *
- * Uses `gh pr view` to resolve the PR URL for the checked-out branch and
- * pins it into the footer status area via ctx.ui.setStatus(). The text is
- * an OSC 8 hyperlink, so it's clickable in terminals that support it.
+ * Resolves git repos for the working directory: if cwd is itself a git
+ * repo, just that one; otherwise (a "container" directory holding multiple
+ * repos) every immediate child directory that is a git repo. For each repo
+ * it runs `gh pr view` to find the PR for the checked-out branch and pins
+ * clickable `repo#123` links into the footer via ctx.ui.setStatus().
+ * The text is an OSC 8 hyperlink, so it's clickable in terminals that
+ * support it.
  *
  * Refreshes on session start, after every turn, and via /pr.
  */
 
 import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -20,23 +27,62 @@ const link = (url: string, label: string) => `\x1b]8;;${url}\x07${label}\x1b]8;;
 // Bold (1) + underline (4) + green foreground (32), reset (0).
 const boldGreen = (s: string) => `\x1b[1;4;32m${s}\x1b[0m`;
 
-async function prUrl(): Promise<{ url: string; number: number } | null> {
+interface Pr {
+	repo: string;
+	url: string;
+	number: number;
+}
+
+async function isGitRepo(dir: string): Promise<boolean> {
+	try {
+		await run("git", ["-C", dir, "rev-parse", "--git-dir"], { timeout: 5000 });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** cwd itself if it's a git repo, otherwise its immediate child repos. */
+async function gitRepos(cwd: string): Promise<string[]> {
+	if (await isGitRepo(cwd)) return [cwd];
+	let entries: Dirent[];
+	try {
+		entries = await readdir(cwd, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const dirs = entries
+		.filter((e) => e.isDirectory() && !e.name.startsWith("."))
+		.map((e) => join(cwd, e.name));
+	const flags = await Promise.all(dirs.map(isGitRepo));
+	return dirs.filter((_, i) => flags[i]);
+}
+
+async function prFor(dir: string): Promise<Pr | null> {
 	try {
 		const { stdout } = await run("gh", ["pr", "view", "--json", "url,number"], {
 			timeout: 5000,
+			cwd: dir,
 		});
 		const { url, number } = JSON.parse(stdout);
-		return url ? { url, number } : null;
+		return url ? { repo: basename(dir), url, number } : null;
 	} catch {
 		return null; // no PR, not a repo, or gh not installed
 	}
 }
 
+async function prs(cwd: string): Promise<Pr[]> {
+	const repos = await gitRepos(cwd);
+	const results = await Promise.all(repos.map(prFor));
+	return results.filter((pr): pr is Pr => pr !== null);
+}
+
 export default function (pi: ExtensionAPI) {
 	const refresh = async (ctx: Parameters<Parameters<typeof pi.on>[1]>[1]) => {
-		const pr = await prUrl();
-		if (pr) {
-			ctx.ui.setStatus("pr-link", link(pr.url, boldGreen(`#${pr.number}`)));
+		const found = await prs(process.cwd());
+		if (found.length > 0) {
+			const text = found.map((pr) => link(pr.url, boldGreen(`${pr.repo}#${pr.number}`))).join(" ");
+			ctx.ui.setStatus("pr-link", text);
 		} else {
 			ctx.ui.setStatus("pr-link", undefined);
 		}
